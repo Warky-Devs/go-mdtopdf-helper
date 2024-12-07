@@ -8,12 +8,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/SebastiaanKlippert/go-wkhtmltopdf"
 	"github.com/gomarkdown/markdown"
 	"github.com/gomarkdown/markdown/parser"
+)
+
+const (
+	Windows = "windows"
+	Linux   = "linux"
+	MacOS   = "darwin"
 )
 
 type Converter struct {
@@ -29,27 +36,78 @@ func init() {
 		os.Exit(1)
 	}
 }
-
 func ensureWkhtmltopdfInPath() error {
-	wkhtmlPath := `C:\Program Files\wkhtmltopdf\bin`
+	var wkhtmlPath string
+	pathSeparator := string(os.PathListSeparator)
 
+	switch runtime.GOOS {
+	case Windows:
+		wkhtmlPath = `C:\Program Files\wkhtmltopdf\bin`
+	case Linux:
+		// Common Linux installation paths
+		possiblePaths := []string{
+			"/usr/local/bin",
+			"/usr/bin",
+			"/opt/wkhtmltopdf/bin",
+		}
+
+		for _, path := range possiblePaths {
+			if _, err := os.Stat(filepath.Join(path, "wkhtmltopdf")); err == nil {
+				wkhtmlPath = path
+				break
+			}
+		}
+	case MacOS:
+		// Common MacOS installation paths
+		possiblePaths := []string{
+			"/usr/local/bin",
+			"/opt/homebrew/bin",
+			"/opt/local/bin",
+		}
+
+		for _, path := range possiblePaths {
+			if _, err := os.Stat(filepath.Join(path, "wkhtmltopdf")); err == nil {
+				wkhtmlPath = path
+				break
+			}
+		}
+	default:
+		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
+	}
+
+	if wkhtmlPath == "" {
+		return fmt.Errorf("wkhtmltopdf not found in common installation paths")
+	}
+
+	// Check if the directory exists
 	if _, err := os.Stat(wkhtmlPath); os.IsNotExist(err) {
 		return fmt.Errorf("wkhtmltopdf directory not found at: %s", wkhtmlPath)
 	}
 
+	// Get current PATH
 	currentPath := os.Getenv("PATH")
 
+	// Check if the path is already in PATH
 	if strings.Contains(currentPath, wkhtmlPath) {
 		return nil // Already in PATH
 	}
 
-	newPath := currentPath + ";" + wkhtmlPath
+	// Add to PATH using OS-specific path separator
+	newPath := currentPath + pathSeparator + wkhtmlPath
 	if err := os.Setenv("PATH", newPath); err != nil {
 		return fmt.Errorf("failed to update PATH: %w", err)
 	}
 
 	fmt.Printf("Added wkhtmltopdf to PATH: %s\n", wkhtmlPath)
 	return nil
+}
+
+// Add this helper function to get the executable name based on OS
+func getExecutableName() string {
+	if runtime.GOOS == Windows {
+		return "wkhtmltopdf.exe"
+	}
+	return "wkhtmltopdf"
 }
 
 func main() {
@@ -135,6 +193,8 @@ func (c *Converter) getStagedMarkdownFiles() ([]string, error) {
 func (c *Converter) stageGeneratedPDFs(files []string) error {
 	for _, file := range files {
 		pdfFile := strings.TrimSuffix(file, filepath.Ext(file)) + ".pdf"
+		// Convert to OS-specific path
+		pdfFile = filepath.FromSlash(pdfFile)
 		cmd := exec.Command("git", "add", pdfFile)
 		if err := cmd.Run(); err != nil {
 			fmt.Printf("Warning: Could not stage %s\n", pdfFile)
@@ -239,9 +299,15 @@ func (c *Converter) convertFile(inputFile string) error {
 
 	pdfg, err := wkhtmltopdf.NewPDFGenerator()
 	if err != nil {
+		if runtime.GOOS == Windows {
+			// Check if wkhtmltopdf exists in the expected path
+			expectedPath := filepath.Join(`C:\Program Files\wkhtmltopdf\bin`, "wkhtmltopdf.exe")
+			if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+				return fmt.Errorf("wkhtmltopdf not found at %s. Please ensure it's installed correctly", expectedPath)
+			}
+		}
 		return fmt.Errorf("failed to create PDF generator: %w", err)
 	}
-
 	page := wkhtmltopdf.NewPageReader(strings.NewReader(string(html)))
 	page.EnableLocalFileAccess.Set(true)
 	pdfg.AddPage(page)
