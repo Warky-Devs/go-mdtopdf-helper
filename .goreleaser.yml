@@ -53,9 +53,8 @@ changelog:
       - Merge branch
 
 release:
-  github:
-    owner: "{{.Env.GITHUB_REPOSITORY_OWNER}}"
-    name: "{{.Env.GITHUB_REPOSITORY}}"
+  disable: false
   draft: false
   prerelease: auto
   mode: replace
+  name_template: "{{.Tag}}"
