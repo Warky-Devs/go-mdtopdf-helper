@@ -1,9 +1,8 @@
-before:
-  hooks:
-    - go mod tidy
+project_name: go-mdtopdf-helper
 
 builds:
-  - env:
+  - id: go-mdtopdf-helper
+    env:
       - CGO_ENABLED=0
     goos:
       - linux
@@ -15,14 +14,16 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
+    main: .
     binary: go-mdtopdf-helper
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
 
 archives:
-  - format: tar.gz
+  - id: default
+    format: tar.gz
     name_template: >-
-      {{ .ProjectName }}_
+      {{ .ProjectName }}_{{ .Version }}_
       {{- title .Os }}_
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "arm64" }}arm64
@@ -30,9 +31,16 @@ archives:
     format_overrides:
       - goos: windows
         format: zip
+    files:
+      - LICENSE*
+      - README*
+      - CHANGELOG*
 
 checksum:
   name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
@@ -45,15 +53,9 @@ changelog:
       - Merge branch
 
 release:
+  github:
+    owner: "{{.Env.GITHUB_REPOSITORY_OWNER}}"
+    name: "{{.Env.GITHUB_REPOSITORY}}"
+  draft: false
   prerelease: auto
-
-brews:
-  - name: go-mdtopdf-helper
-    homepage: "https://github.com/yourusername/go-mdtopdf-helper"
-    description: "A tool to convert Markdown files to PDF using wkhtmltopdf"
-    tap:
-      owner: yourusername
-      name: homebrew-tools
-    commit_author:
-      name: goreleaserbot
-      email: bot@goreleaser.com
+  mode: replace
