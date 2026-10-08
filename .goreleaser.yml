@@ -14,7 +14,7 @@ builds:
     ignore:
       - goos: windows
         goarch: arm64
-    main: .
+    main: ./cmd/go-mdtopdf-helper
     binary: go-mdtopdf-helper
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
