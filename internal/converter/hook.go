@@ -12,6 +12,10 @@ import (
 
 // RunAsHook converts the staged Markdown files and stages the generated output.
 func (c *Converter) RunAsHook() error {
+	if c.InputFile != "" || c.Output != "" {
+		return fmt.Errorf("-input and -output cannot be combined with -hook")
+	}
+
 	if !confirmConversion() {
 		fmt.Println("Skipping conversion")
 		return nil
@@ -64,14 +68,9 @@ func stagedMarkdownFiles() ([]string, error) {
 }
 
 func (c *Converter) stageGeneratedFiles(files []string) error {
-	formats := c.Formats
-	if len(formats) == 0 {
-		formats = []string{FormatPDF}
-	}
-
 	for _, file := range files {
-		for _, format := range formats {
-			out := filepath.FromSlash(outputPath(file, format))
+		for _, format := range c.formats() {
+			out := filepath.FromSlash(c.outputFor(file, format))
 			if err := exec.Command("git", "add", out).Run(); err != nil {
 				fmt.Printf("Warning: Could not stage %s\n", out)
 			}

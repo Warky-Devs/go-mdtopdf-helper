@@ -46,22 +46,97 @@ func ParseFormats(list string) ([]string, error) {
 
 // Converter converts Markdown files found under InputDir into each of Formats.
 // Engine renders the PDF format and may be nil when PDF is not requested.
+//
+// When InputFile is set only that file is converted and Output, if given, is the output name:
+// a base name that gets the format's extension (or a full name when it already has the extension
+// of the single requested format). Otherwise Output, if given, is a directory that receives the
+// results, mirroring the layout under InputDir. With neither, output goes next to each source.
 type Converter struct {
 	InputDir  string
 	Recursive bool
 	Parallel  bool
+	InputFile string
+	Output    string
 	Formats   []string
 	Engine    engine.Engine
 }
 
-// outputPath returns the file written for inputFile in the given format.
-func outputPath(inputFile, format string) string {
-	return strings.TrimSuffix(inputFile, filepath.Ext(inputFile)) + "." + format
+func (c *Converter) formats() []string {
+	if len(c.Formats) == 0 {
+		return []string{FormatPDF}
+	}
+	return c.Formats
 }
 
-// Run converts every Markdown file under InputDir.
+// Validate checks the input and output options before any work is done.
+func (c *Converter) Validate() error {
+	if c.InputFile != "" {
+		info, err := os.Stat(c.InputFile)
+		if err != nil {
+			return fmt.Errorf("input file: %w", err)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("input %s is a directory; use -dir to scan a directory", c.InputFile)
+		}
+		if !isMarkdown(c.InputFile) {
+			return fmt.Errorf("input %s must be a .md or .markdown file", c.InputFile)
+		}
+	}
+
+	if c.Output == "" {
+		return nil
+	}
+
+	if c.InputFile == "" {
+		if info, err := os.Stat(c.Output); err == nil && !info.IsDir() {
+			return fmt.Errorf("output %s exists and is not a directory", c.Output)
+		}
+		return nil
+	}
+
+	if info, err := os.Stat(c.Output); err == nil && info.IsDir() {
+		return fmt.Errorf("output %s is a directory; give a file name when using -input", c.Output)
+	}
+	if ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(c.Output)), "."); slices.Contains(FormatNames, ext) {
+		if formats := c.formats(); len(formats) != 1 || formats[0] != ext {
+			return fmt.Errorf("output %s has a .%s extension but the requested formats are %s",
+				c.Output, ext, strings.Join(formats, ","))
+		}
+	}
+	return nil
+}
+
+// outputFor returns the file written for input in the given format.
+func (c *Converter) outputFor(input, format string) string {
+	switch {
+	case c.InputFile != "" && c.Output != "":
+		ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(c.Output)), ".")
+		if ext == format {
+			return c.Output
+		}
+		return c.Output + "." + format
+	case c.InputFile == "" && c.Output != "":
+		rel, err := filepath.Rel(c.InputDir, input)
+		if err != nil {
+			rel = filepath.Base(input)
+		}
+		return filepath.Join(c.Output, replaceExt(rel, format))
+	default:
+		return replaceExt(input, format)
+	}
+}
+
+func replaceExt(path, ext string) string {
+	return strings.TrimSuffix(path, filepath.Ext(path)) + "." + ext
+}
+
+// Run converts InputFile, or every Markdown file under InputDir.
 func (c *Converter) Run() error {
-	files, err := c.findMarkdownFiles()
+	if err := c.Validate(); err != nil {
+		return err
+	}
+
+	files, err := c.inputFiles()
 	if err != nil {
 		return fmt.Errorf("failed to find markdown files: %w", err)
 	}
@@ -84,6 +159,13 @@ func (c *Converter) ConvertFiles(files []string) error {
 
 func isMarkdown(path string) bool {
 	return strings.HasSuffix(path, ".md") || strings.HasSuffix(path, ".markdown")
+}
+
+func (c *Converter) inputFiles() ([]string, error) {
+	if c.InputFile != "" {
+		return []string{c.InputFile}, nil
+	}
+	return c.findMarkdownFiles()
 }
 
 func (c *Converter) findMarkdownFiles() ([]string, error) {
@@ -150,13 +232,11 @@ func (c *Converter) convertFile(inputFile string) error {
 		return fmt.Errorf("failed to read file: %w", err)
 	}
 
-	formats := c.Formats
-	if len(formats) == 0 {
-		formats = []string{FormatPDF}
-	}
-
-	for _, format := range formats {
-		outputFile := outputPath(inputFile, format)
+	for _, format := range c.formats() {
+		outputFile := c.outputFor(inputFile, format)
+		if err := os.MkdirAll(filepath.Dir(outputFile), 0o755); err != nil {
+			return fmt.Errorf("failed to create output directory: %w", err)
+		}
 		if err := c.write(mdContent, format, outputFile); err != nil {
 			return fmt.Errorf("%s: %w", format, err)
 		}

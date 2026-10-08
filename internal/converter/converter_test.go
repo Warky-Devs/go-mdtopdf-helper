@@ -101,3 +101,103 @@ func TestRunWritesAllFormats(t *testing.T) {
 		t.Error("doc.pdf should not be written")
 	}
 }
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func TestInputFileWithOutputName(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.md"), "# A")
+	writeFile(t, filepath.Join(dir, "b.md"), "# B")
+
+	conv := &Converter{
+		InputFile: filepath.Join(dir, "a.md"),
+		Output:    filepath.Join(dir, "out", "report"),
+		Formats:   []string{FormatHTML, FormatDOCX},
+	}
+	if err := conv.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{"out/report.html", "out/report.docx"} {
+		if !exists(filepath.Join(dir, want)) {
+			t.Errorf("expected %s", want)
+		}
+	}
+	if exists(filepath.Join(dir, "b.html")) || exists(filepath.Join(dir, "a.html")) {
+		t.Error("only the output name should be written, and only the input file converted")
+	}
+}
+
+func TestInputFileOutputWithMatchingExtension(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.md"), "# A")
+
+	conv := &Converter{InputFile: filepath.Join(dir, "a.md"), Output: filepath.Join(dir, "x.html"), Formats: []string{FormatHTML}}
+	if err := conv.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(dir, "x.html")) || exists(filepath.Join(dir, "x.html.html")) {
+		t.Error("an output name that already has the format's extension should be used as is")
+	}
+}
+
+func TestOutputValidation(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.md"), "# A")
+	writeFile(t, filepath.Join(dir, "notes.txt"), "text")
+	md := filepath.Join(dir, "a.md")
+
+	cases := map[string]*Converter{
+		"missing input":       {InputFile: filepath.Join(dir, "nope.md")},
+		"input is a dir":      {InputFile: dir},
+		"input not markdown":  {InputFile: filepath.Join(dir, "notes.txt")},
+		"output is a dir":     {InputFile: md, Output: dir},
+		"extension mismatch":  {InputFile: md, Output: filepath.Join(dir, "x.docx"), Formats: []string{FormatHTML}},
+		"ext with many fmts":  {InputFile: md, Output: filepath.Join(dir, "x.html"), Formats: []string{FormatHTML, FormatDOCX}},
+		"scan output is file": {InputDir: dir, Output: md},
+	}
+	for name, c := range cases {
+		if err := c.Validate(); err == nil {
+			t.Errorf("%s: expected a validation error", name)
+		}
+	}
+}
+
+func TestOutputDirMirrorsLayout(t *testing.T) {
+	src, out := t.TempDir(), filepath.Join(t.TempDir(), "dist")
+	writeFile(t, filepath.Join(src, "a.md"), "# A")
+	writeFile(t, filepath.Join(src, "sub", "b.md"), "# B")
+
+	conv := &Converter{InputDir: src, Recursive: true, Output: out, Formats: []string{FormatHTML}}
+	if err := conv.Run(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range []string{"a.html", "sub/b.html"} {
+		if !exists(filepath.Join(out, want)) {
+			t.Errorf("expected %s in output dir", want)
+		}
+	}
+	if exists(filepath.Join(src, "a.html")) {
+		t.Error("nothing should be written next to the sources when -output is a directory")
+	}
+}
+
+func TestHookRejectsInputAndOutput(t *testing.T) {
+	if err := (&Converter{InputFile: "a.md"}).RunAsHook(); err == nil {
+		t.Error("expected error combining hook with -input")
+	}
+}
